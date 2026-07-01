@@ -1,0 +1,1372 @@
+---
+title: "World Development Indicators EDA Report"
+author: "Nhi Nguyen"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output:
+  html_document:
+    code_folding: show
+    toc: true
+    toc_float: true
+    theme: flatly
+    highlight: haddock
+  pdf_document:
+    toc: true
+---
+### File set up
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE,
+  eval = TRUE,
+  warning = FALSE,
+  message = FALSE,
+  fig.width = 8,
+  fig.height = 5)
+```
+
+### Abstract 
+
+This report provides a comprehensive exploratory data analysis (EDA) of the World Development Indicator dataset from 1960 to 2019, demonstrating different insights and implications through 9 questions, exploring global economic development patterns(through GDP analysis), and uncovering some demographics and environmental transitions.  
+
+
+
+### 1.Prepare the data 
+-Data loading and initial assessments : Load World Development Indicator(wdi) dataset and display dataset dimension ( 12,515 rows x 65 columns)
+
+-NA values : calculating missing (NA) values for all cols in wide format --> Display cols that have high NA missing percentage
+
+--> The missing (NA) values were mostly for some early years (1960s), implying the the missing data collection
+
+-Data transformation : convert the wide format --> to long format display dimension (729,420 rows x 6 columns)
+
+-NA values after transforming into wide format : missing (NA) values are mostly for `Value` (such as GDP, Inflation, FDI, ect )
+
+```{r loading the library}
+#Load library 
+library(tidyverse)
+library(lubridate)
+library(ggplot2)
+library(tm)
+cat("Library set up successfully\n")
+```
+
+
+```{r preparing data}
+#1.Load the dataset
+wdi_data = read_csv("World_Development_Indicators.csv")
+cat("Dataset loaded successfully\n")
+
+#2.Display information
+cat("Dimension:",nrow(wdi_data),"rows x", ncol(wdi_data), "columns\n")
+cat("Total observations:", nrow(wdi_data),"\n")
+cat("Total variables:", ncol(wdi_data),"\n")
+cat("Unique countries:", n_distinct(wdi_data$"Country Name"),"\n")
+cat("Unique series name :", n_distinct(wdi_data$"Series Name"),"\n")
+
+#3.Checking NA values 
+
+missing_value = wdi_data %>% 
+  summarise_all(~sum(is.na(.))) %>%
+  gather(key = "column_name", value = "missing_value_cnt") %>%
+  mutate(missing_value_pct = round((missing_value_cnt / nrow(wdi_data)) * 100,2)) %>%
+  arrange(desc(missing_value_cnt))
+
+#Display top 10 cols has the most NA values 
+head(missing_value,10)
+
+
+#4.Convert the dataset into long format 
+cat("--Converting to long format--\n")
+wdi_data_long = wdi_data %>%
+  gather(key = "Year", value = "Value", 
+         -`Country Name`, -`Country Code`, -`Series Name`, -`Series Code`, -`Trend Description`) %>%
+  mutate(Year = as.numeric(str_extract(Year, "\\d{4}")), # use regexp to find the match for year (only take 4 digits )
+         Date = make_date(year = Year)) %>%
+  select(`Country Name`, `Country Code`, `Series Name`, Year, Value, `Trend Description`) #select final columns for wdi_data_long
+
+#Display information
+cat("Total observations(long data format):", nrow(wdi_data_long),"\n")
+cat("Total variables(long data format):", ncol(wdi_data_long),"\n")
+
+#5.Check NA values for long data format
+missing_value_long = wdi_data_long %>% 
+  summarise_all(~sum(is.na(.))) %>%
+  gather(key = "column_name", value = "missing_value_cnt") %>%
+  mutate(missing_value_pct = round((missing_value_cnt / nrow(wdi_data_long)) * 100, 2)) %>%
+  arrange(desc(missing_value_cnt))
+
+#Display top 10 mising values
+head(missing_value_long,10)
+```
+
+### 2. Unique series name 
+-There are 66 unique `Series Name` in the dataset (already removed NA value)
+
+```{r unique series}
+#1. Counting the unique values for series name using distinct() 
+series_name_value_cnt = wdi_data %>%
+  distinct(`Series Name`) %>%
+  filter(
+    !is.na(`Series Name`) 
+  )%>%
+  arrange(`Series Name`) 
+
+#Counting the total unique values
+series_name_cnt = nrow(series_name_value_cnt)
+cat("Number of unique values in Series Name column:",series_name_cnt,"\n\n" )
+
+```
+
+### 3. Comments in the Trend Description column describe a decreasing trend with positive feedback
+
+-Perform text processing on the `Trend Description` col to identify comments containing both decreasing trend indicators and positive feedback keyword(language)
+
+Overall steps:
+
+1. data preparation : extract data for col `Trend Description` --> filtered out NA values
+
+2. Text processing :
+
+- Tokenisation : split text into individual words
+
+- Normalization : change to lowercase, remove punctuation,numbers,white space
+
+- Remove stop words
+
+- Stemming 
+
+3.Feature extraction: 
+
+- Create DTM
+
+- Remove sparse terms (appearing in less than 10% of entire document)
+
+- Visualize/Plot chart for the terms frequencies 
+
+4. Keywords (kw) matching:
+
+- Define decreasing kw & positive kw
+
+- Use regex pattern matching on processed text
+
+Results:
+- 923 trend descriptions contain both decreasing trend with positive feedback, which is accounted for ~9% (923/10249 = 0.09)
+
+- with the matching confidence, there is ~10.8% matches with high confidence, and 89.2% matches with medium confidence
+
+- keywords are defined based on the common terms ( synonyms using Dictionary) describing the states and through some manual scanning at the dataset, which is considered to be a limitations for this approach
+
+- Considerations: only 100 cases show both trends (decreasing trend and positive feedback) at the same time indicates that there is a need to be more careful when making implication
+
+- Implication (based on current data) : unfavorable event are reducing,leading to better outcome, for examples :
+
+-debt service decrease ,leading to shift in social and economy
+
+-mortality rate decrease can show better healthcare 
+
+
+```{r text processing}
+### This code block will perform the following steps:
+# 1.Extract the column `Trend Description` -> then remove NA values 
+# 2.Processing texts :
+#   2.1 Tokenisation
+#   2.2 Normalization & remove stop words
+#   2.3 Stemming
+# 3.Feature extraction
+#   3.1 Create DTM
+#   3.2 Remove sparse terms
+#   3.3 Calculate terms frequency
+###
+
+#1.Extract the column `Trend Description` -> then remove NA values 
+trend_description_data = wdi_data %>%
+  filter(
+    !is.na(`Trend Description`)
+  ) %>%
+  select(`Country Name`, `Series Name`, `Trend Description`) %>%
+  distinct()
+#Display the rows count
+cat("Total unique trend description:",nrow(trend_description_data),"\n")
+
+#View the trend_description_data , first 10 rows
+head(trend_description_data,10)
+
+cat("--Text Processing Steps--\n")
+
+# 2.Text processing
+
+#Import library
+library(tokenizers)
+
+cat("\n2.1 : Tokenisation\n")
+
+#Tokenize step
+tokenized_trend = lapply(trend_description_data$`Trend Description`,function(text) {
+  tokenize_words(text,lowercase = TRUE)
+})
+
+#Check the data
+tokenized_trend[1]
+
+cat("\n2.2 : Normalization & remove stop words\n")
+
+#Create corpus
+trend_corpus = Corpus(VectorSource(trend_description_data$`Trend Description`))
+cat("Corpus created with", length(trend_corpus), "documents\n")
+
+#Convert to lowercase
+trend_corpus = tm_map(trend_corpus, content_transformer(tolower))
+cat("Converted to lowercase\n")
+
+#Remove punctuation
+trend_corpus = tm_map(trend_corpus, removePunctuation)
+cat("Removed punctuation\n")
+
+#Remove numbers
+trend_corpus = tm_map(trend_corpus, removeNumbers)
+cat("Removed numbers\n")
+
+#Strip whitespace
+trend_corpus = tm_map(trend_corpus, stripWhitespace)
+cat("Removed whitespace\n")
+
+#Remove stop words
+trend_corpus = tm_map(trend_corpus, removeWords, stopwords("english"))
+cat("Removed stop words\n")
+
+#Check the content 
+cat("After text normalization & removal step ", length(trend_corpus), "documents\n")
+cat("Sample after stop words:", as.character(trend_corpus[[1]]), "\n")
+
+cat("\n2.3 : Stemming\n")
+
+#Applying stemming
+trend_corpus = tm_map(trend_corpus, stemDocument)
+cat("Applied stemming\n")
+
+#Check the content
+cat("After stemming step ", length(trend_corpus), "documents\n") #Result : 10249 documents 
+cat("Sample after stemming:", as.character(trend_corpus[[1]]), "\n")
+
+#3.Feature Extraction
+
+cat("\n3.1 : Create Document Term Matrix\n")
+
+#Create Document Term Matrix
+trend_description_dtm = DocumentTermMatrix(trend_corpus)
+cat("Documents:", nrow(trend_description_dtm), ", Terms:", ncol(trend_description_dtm), "\n")
+
+inspect(trend_description_dtm[1:3, 1:10]) #inspect first 3 documents, first 10 terms 
+
+cat("\n3.2 : Remove sparse terms\n")
+
+#Remove sparse terms 
+trend_description_dtm_sparse = removeSparseTerms(trend_description_dtm,0.90) #if the term appear less then 10% in all documents -> remove it 
+cat("After removing sparse terms:", dim(trend_description_dtm_sparse),"\n")
+
+cat("\n3.3 : Calculate terms frequency\n")
+
+#Convert to regular matrix and calculate frequency
+trend_description_matrix = as.matrix(trend_description_dtm)
+term_freq_cnt = colSums(trend_description_matrix)
+
+#Create dataframe for terms frequency 
+term_freq_df = data.frame(
+  term = names(term_freq_cnt),
+  term_freq_cnt = term_freq_cnt
+) %>%
+  filter(term_freq_cnt>=5) %>% #in case there is some typos, redundant phases 
+  arrange(desc(term_freq_cnt))
+
+#View the first 10 rows of the most terms with high frequency
+head(term_freq_df,10)
+
+```
+
+
+```{r term frequency plot }
+
+#Plot the term frequency 
+term_freq_plot = term_freq_df %>%
+  head(15) %>% #take top 15 terms 
+  ggplot(aes(
+    x = reorder(term, term_freq_cnt),
+    y = term_freq_cnt,
+    fill = term_freq_cnt
+  )) +
+  geom_bar(stat = "identity")+
+  coord_flip() +
+  scale_fill_gradient(low = "lightblue", high = "blue")+
+  labs(
+    title = "Top 15 terms in Trend Description column",
+    x = "Terms",
+    y = "Frequency",
+    fill = "Frequency"
+    )+
+  theme_minimal()
+#Display the plot
+term_freq_plot
+```
+
+```{r define keywords for analysis}
+
+### This code block following these steps 
+# 4. Keywords (kw) matching:
+#   4.1 Define decreasing kw & positive kw
+#   4.2 Use regex pattern matching on processed text
+#   4.3 Showing results
+###
+
+cat("\n4.1 : Define keywords\n")
+
+#Covert corpus back to text 
+processed_text = sapply(trend_corpus, as.character)
+#Create the new column for trend_processed_text
+trend_description_data$trend_processed_text = processed_text
+
+#Define terms/keywords(kw) for "decreasing" trend and "positive" feedback
+decreasing_kw = c("decreas", "declin", "fall", "drop", "reduc", "lower", "slow")
+cat("Decreasing keywords:", paste(decreasing_kw, collapse = ", "), "\n")
+
+positive_kw = c("posit", "good", "improv", "better", "benefici", "favor", "progress")
+cat("Positive keywords:", paste(positive_kw, collapse = ", "), "\n")
+
+cat("\n4.2 : Matching keywords\n")
+
+trend_analysis = trend_description_data %>%
+  mutate(
+    #Count numbers of time kw appears 
+    decreasing_count = str_count(processed_text, paste(decreasing_kw, collapse = "|")),
+    positive_count = str_count(processed_text, paste(positive_kw, collapse = "|")),
+    
+    #Boolean indicators
+    has_decreasing = decreasing_count > 0,
+    has_positive = positive_count > 0,
+    has_both = has_decreasing & has_positive,
+    
+    #Confidence score based on keyword frequency
+    confidence_score = case_when(
+      decreasing_count >= 2 & positive_count >= 2 ~ "high",
+      decreasing_count >= 1 & positive_count >= 1 ~ "medium",
+      TRUE ~ "low"
+    )
+  ) %>%
+  filter(has_both == TRUE) #Keep the records with both has_decreasing & has_positive
+
+cat("\n4.3 : Question 2 Results\n")
+
+# Count results
+total_matches = nrow(trend_analysis)
+high_confidence = sum(trend_analysis$confidence_score == "high")
+medium_confidence = sum(trend_analysis$confidence_score == "medium")
+
+cat("Total matches (decreasing + positive):", total_matches, "\n")
+cat("High confidence matches:", high_confidence, "\n")
+cat("Medium confidence matches:", medium_confidence, "\n")
+
+cat("\n4.3 : Question 2 Examples\n")
+
+#Extracting examples
+if(total_matches > 0) {
+  example_data = trend_analysis %>%
+    head(5)
+  
+  cat("Top 5 examples with most keyword matches:\n")
+  for(i in 1:nrow(example_data)) {
+    cat("\n", i, ". Country:", example_data$`Country Name`[i], "\n")
+    cat("   Series:", example_data$`Series Name`[i], "\n")
+    cat("   Decreasing kw:", example_data$decreasing_count[i], 
+        "-Positive kw:", example_data$positive_count[i], "\n")
+    cat("   Original description:", example_data$`Trend Description`[i], "\n")
+  }
+} else {
+  cat("No matches found\n")
+}
+
+```
+
+### 4. GDP analysis : Top 5 and Bottom 5 countries 
+-Preparing data : Remove NA values and check if there is any negative values for GDP --> remove negative GDP if needed
+
+--> There is around 25.25% NA values over the whole dataset . In 2018, there are 210 countries with valid dataset (11 countries did not have GDP value in 2018)
+
+-Function to prepare data : create a function that can re-use for upcoming questions
+
+Result :
+
+- Top 5 countries : US , China,Japan,Germany and UK
+
+- Bottom 5 countries : Tuvalu, Nauru, Kiribati, Marshall Islands and Palau
+(the top 5 countries are mostly major countries with high economic power , whereas the bottom 5 countries are small island, quite isolated in the world map)
+
+- GPD in 2018 range from 0.04B to around 20,600B (US), with the mean is around 421,34B --> hence there is quite a major gap when plotting the chart --> using logarithmic scale to be able to display both top 5 and bottom 5 countries (linear scale would make the bottom 5 invisible on the chart)
+
+- Reference for using log scale: https://www.statology.org/when-to-use-log-scale/
+
+
+```{r gpd }
+
+###Create a function for data processing : analyze_series_data
+
+# parameter : data: the dataset to extract value from, series_name : to filter out series need to analyze, target_year : filter out year to analyze, shorten_name : same as series name but in the shorter to flag out which series is currently analyzing
+# return : if the target_year is input -> return complete dataset (all years), year_data : dataset specific for the target year input , series_name filter and NA values counts
+###
+
+#1.Create function
+analyze_series_data = function(data, series_name, target_year = NULL, shorten_name = NULL) {
+  
+  
+  cat("--Analyzing:", series_name, "--\n")
+  
+  #Filter for the specific series
+  filtered_data = data %>%
+    filter(`Series Name` == series_name)
+  
+  if(nrow(filtered_data) == 0) {
+    cat("No data found for series:", series_name, "\n")
+    return(NULL)
+  }
+  
+  #Display the total obs
+  cat("Total observations:", nrow(filtered_data), "\n")
+  
+  # NA analysis
+  na_count = sum(is.na(filtered_data$Value))
+  na_percentage = round((na_count / nrow(filtered_data)) * 100, 2)
+  cat("NA values:", na_count, "(", na_percentage, "%)\n")
+  
+  # After the NA analysis step -> Clean data remove NAs
+  clean_data = filtered_data %>%
+    filter(!is.na(Value)) %>%
+    select(`Country Name`, `Country Code`, Year, Value)
+  
+  # If there is a specific year -> filter further for year
+  if(!is.null(target_year)) {
+    year_data = clean_data %>%
+      filter(Year == target_year)
+    
+    cat("Countries with data in", target_year, ":", nrow(year_data), "\n")
+    
+    return(list(
+      all_clean_data = clean_data,
+      year_data = year_data,
+      series_name = series_name,
+      target_year = target_year,
+      na_stats = list(count = na_count, percentage = na_percentage)
+    ))
+  }
+  
+  return(list(
+    all_clean_data = clean_data, #return for all years
+    series_name = series_name, # return for specific year in the target_year parameter
+    na_stats = list(count = na_count, percentage = na_percentage)
+  ))
+}
+
+cat("\nQuestion 3: GDP Analysis in 2018\n")
+
+#1.Call function for the 2018 GDP Analysis 
+gdp_2018_analysis = analyze_series_data(
+  data = wdi_data_long,
+  series_name = "GDP (current US$)",
+  target_year = 2018,
+  shorten_name = "GDP"
+)
+
+#2.Re-formatting for the GDP value -> reformat to Billion 
+gdp_2018_clean = gdp_2018_analysis$year_data %>%
+  mutate(
+    gdp_billion = Value / 1e9,
+    gdp_formatted = round(gdp_billion, 2)
+  ) %>%
+  filter(gdp_formatted > 0) %>%  #remove zero/negative values
+  arrange(desc(Value))
+
+cat("Countries with valid GDP data after processing:", nrow(gdp_2018_clean), "\n")
+cat("GDP 2018 - Basic Summary Statistics:\n")
+summary(gdp_2018_clean$gdp_formatted)
+
+#3.Filter out the top 5 and bottom 5 country 
+top5_countries = gdp_2018_clean %>%
+  head(5) %>%
+  mutate(rank_category = "Top 5")
+
+bottom5_countries = gdp_2018_clean %>%
+  tail(5) %>%
+  mutate(rank_category= "Bottom 5")
+
+#4.Combine for comparison
+gdp_comparison = bind_rows(top5_countries, bottom5_countries) %>%
+  select(`Country Name`, `Country Code`, Value, gdp_billion, gdp_formatted, rank_category)
+
+#5.Visualization 
+gdp_2018_plot = gdp_comparison %>%
+  mutate(`Country Name` = reorder(`Country Name`, gdp_formatted)) %>%
+  ggplot(aes(x = `Country Name`, y = gdp_formatted, fill = rank_category)) +
+  geom_col(alpha = 0.8, width = 0.7) +
+  coord_flip() +
+  scale_y_log10(labels = function(x) paste0("$", x, "B")) +
+  scale_fill_manual(values = c("Top 5" = "darkgreen", "Bottom 5" = "darkorange")) +
+  labs(
+    title = "GDP Comparison: Top 5 vs Bottom 5 Countries (2018)",
+    subtitle = "GDP values in billions USD (log scale)",
+    x = "Country",
+    y = "GDP (Billions USD)"
+  ) +
+  theme_minimal() +
+  theme(legend.position = "bottom")
+
+gdp_2018_plot
+
+```
+
+### 5. Statistics Summary for 10 countries in Question 3
+
+-Preparing data : All 10 selected countries have GDP data values for the period from 2010-2019 (No NA values identified)
+
+Results:
+
+- country_statistics : summary dataframe for the results below. US did not have GDP data value for 2019 (hence there are only 9 years count for US)
+
+- Implications : US has the largest mean and is approximately~437 times bigger than Tuvalu (smallest mean). 10 selected countries seems to grow over the period (from the min and max value, there is an increase in value), showing the recovery pattern after 2008 financial crisis globally 
+
+```{r 10 countries}
+
+#1.Get the selected countries 
+selected_countries = gdp_comparison$`Country Name`
+
+#2.Call the function to process the data
+gdp_period_data = analyze_series_data(
+  data = wdi_data_long,
+  series_name = "GDP (current US$)",
+  shorten_name = "GDP"
+)
+
+#3.Filter out data for selected countries
+gdp_10_countries_period = gdp_period_data$all_clean_data %>%
+  filter(
+    `Country Name` %in% selected_countries,
+    Year >= 2010,
+    Year <= 2019
+  )
+cat("\nTotal observations for 10 countries (2010-2019):", nrow(gdp_10_countries_period), "\n")
+
+
+cat("\nData Assessment for the 10 countries data from 2010-2019\n")
+
+#4.Check for missing data in this subset
+missing_data = gdp_10_countries_period %>%
+  filter(is.na(Value)) %>%
+  select(`Country Name`, `Country Code`, Year)
+
+na_percentage = round((nrow(missing_data) / nrow(gdp_10_countries_period)) * 100, 2)
+
+cat("Missing values in period data:", nrow(missing_data), "\n")
+cat("Missing data percentage:", na_percentage, "%\n")
+
+#Display country with missing data
+if(nrow(missing_data) > 0) {
+  cat("Countries with missing data:\n")
+  missing_data
+}
+
+cat("\nData Formatting (GDP formatting) for the 10 countries data from 2010-2019\n")
+
+gdp_10_countries_formatted = gdp_10_countries_period %>%
+  filter(!is.na(Value)) %>%
+  mutate(
+    gdp_billion = Value / 1e9,
+    gdp_formatted = round(gdp_billion, 2)
+  )
+cat("Clean observations after removing NA:", nrow(gdp_10_countries_formatted), "\n")
+
+
+cat("\nQuestion 4: Country Specific Statistics (2010-2019)\n")
+
+country_statistics = gdp_10_countries_formatted %>%
+  group_by(`Country Name`) %>%
+  summarise(
+    minimum = min(gdp_formatted, na.rm = TRUE), # na.rm = TRUE to remove NA values
+    maximum = max(gdp_formatted, na.rm = TRUE),
+    mean = round(mean(gdp_formatted, na.rm = TRUE), 2),
+    years_available = n(),
+    .groups = 'drop'
+  ) %>%
+  arrange(desc(mean))
+
+cat("Statistical Summary by Country:\n")
+country_statistics
+
+```
+
+### 6. China GDP analysis and (global) CO2 emissions 
+-Part 1: China's Maximum GDP happened in 2019 with the GDP value of $14,300B(data range is from 1960-2019)
+
+There is around 25.25% NA values for the entire dataset, but for China, there is no NA values
+
+-Part 2: C02 Emission Increase : Using the absolute change (this year's value - last year's value ) to identify country with the largest C02 emission. 
+
+--> Result : Qatar shows the largest C02 emission increase over time with the average increase is 0.495 metrics tons/capita and the increase rate is pretty consistent with 39.7% of the total years show increase
+
+-There is ~18.81 NA values and after removing NA, there are 10,717 total observations with 205 countries.
+
+-Implication : Industrializing country might show high C02 emission. With the carbon-intensive economy country like Qatar, it aligns well with the data result. According to UN climate agency report, Qatar has of the highest per-capita emissions worldwide.
+
+- Reference : Carbon Markets as a Strategic Pathway to Carbon Reduction in Qatar. (2025, May 30). Middle East Council on Global Affairs. https://mecouncil.org/publication_chapters/carbon-markets-as-a-strategic-pathway-to-carbon-reduction-in-qatar/#:~:text=Introduction,Border%20Adjustment%20Mechanisms%20(CBAM)
+
+- Limitation : the calculation of absolute change ignores the country population or size, it only accounts for the additional change after each year 
+
+```{r China GDP}
+
+cat("\n--Part 1: China's Maximum GDP year--\n")
+
+#1.Call function to get the data - GDP 
+china_gdp_analysis = analyze_series_data(
+  data = wdi_data_long,
+  series_name = "GDP (current US$)",
+  shorten_name = "GDP_China"
+)
+
+#2.Filter out China country 
+china_gdp_data = china_gdp_analysis$all_clean_data %>%
+  filter(`Country Name` == "China") %>%
+  arrange(desc(Value))
+
+cat("\nTotal GDP observations for China:", nrow(china_gdp_data), "\n")
+cat("Years covered:", min(china_gdp_data$Year), "-", max(china_gdp_data$Year), "\n")
+
+#3.Get the maximum GDP for China
+china_max_gdp = china_gdp_data %>%
+  filter(Value == max(Value, na.rm = TRUE)) %>%
+  head(1)  # In case of ties, take first occurrence
+
+cat("China's maximum GDP year:", china_max_gdp$Year, "\n")
+cat("GDP value:", paste0("$", round(china_max_gdp$Value/1e9, 2), " billion"), "\n")
+
+
+cat("\n--Part 2: Largest C02 Emisions Increase--\n")
+
+#4.Call function to get the data - CO2 emissions
+co2_analysis = analyze_series_data(
+  data = wdi_data_long,
+  series_name = "CO2 emissions (metric tons per capita)",
+  shorten_name = "CO2"
+)
+
+#5.Extract the clean data part for all countries 
+co2_clean_data = co2_analysis$all_clean_data %>%
+  arrange(`Country Name`, Year)
+
+cat("Total clean CO2 observations:", nrow(co2_clean_data), "\n")
+cat("Countries with CO2 data:", length(unique(co2_clean_data$`Country Name`)), "\n")
+
+
+cat("\n--Using Absolute Change Calculation for CO2 Increase Calculation--\n")
+
+co2_increases = co2_clean_data %>%
+  group_by(`Country Name`) %>%
+  filter(n() >= 10) %>%  #filter to get countries with at least 10 data points for more reliable analysis
+  arrange(Year) %>%
+  mutate(
+    yoy_change = Value - lag(Value),
+    yoy_pct_change = ((Value - lag(Value)) / lag(Value)) * 100
+  ) %>%
+  filter(!is.na(yoy_change)) %>%  #remove first year (no previous year to compare)
+  summarise(
+    total_increase = sum(yoy_change[yoy_change > 0], na.rm = TRUE),
+    avg_annual_increase = mean(yoy_change, na.rm = TRUE),
+    positive_change_years = sum(yoy_change > 0, na.rm = TRUE),
+    total_years_compared = n(),
+    consistency_rate = round(positive_change_years / total_years_compared * 100, 1), #calculate the consistent rate to see if each country always shows increase
+    data_points = n() + 1,  #add back 1 because of the first year loss
+    .groups = 'drop'
+  ) %>%
+  filter(avg_annual_increase > 0) %>%  #filter only countries with positive average increase
+  arrange(desc(total_increase))
+
+cat("Countries with positive CO2 emission increases:", nrow(co2_increases), "\n")
+
+#6.Identify country with largest increase
+top_co2_increase = co2_increases %>%
+  head(1)
+
+cat("Country with largest CO2 increase:", top_co2_increase$`Country Name`, "\n")
+cat("Total cumulative increase:", round(top_co2_increase$total_increase, 3), "metric tons per capita\n")
+cat("Average annual increase:", round(top_co2_increase$avg_annual_increase, 3), "metric tons per capita\n")
+cat("Consistency rate:", top_co2_increase$consistency_rate, "% of years showed increases\n")
+
+
+```
+
+### 7. Life Expectancy and GDP Correlation Analysis 
+-With the life expectancy dataset, there is 9.73% NA values , and with the GDP dataset, there is 25.25% NA values 
+
+--> after combining these 2 data, there are 210 countries from 1960-2019 to analyze (already removed/handle NA values from the function and inner_join)
+
+-Correlation data points: filter country which has at least 10 data points(years) to take into consideration for analysis, creating more reliable result (capturing the whole decade of each country)
+
+--> Result : top 5 countries with the highest correlation are: Guam,Djibouti, Tanzania, Netherlands and Greenland
+
+-Method : Use Person correlation because both life expectancy and GDP are shown throughout the years,indicating a continuous variables(with an already assumption that these 2 variables show linear relationship).Limitation : don't account for any contextual event such as government or policy
+
+-Implication : economic development(improvement in GDP) can represents better health outcomes (longer life expectancy)
+
+```{r life expectancy}
+
+
+#1.Call function to get the data - Life expectancy
+life_exp_analysis = analyze_series_data(
+  data = wdi_data_long,
+  series_name = "Life expectancy at birth, total (years)",
+  shorten_name = "LifeExpectancy"
+)
+
+#2.Call function to get the data - GDP
+gdp_analysis_question6 = analyze_series_data(
+  data = wdi_data_long,
+  series_name = "GDP (current US$)",
+  shorten_name = "GDP"
+)
+
+#3.Join both dataframe for Life Expectancy and GDP 
+life_gdp_combined = life_exp_analysis$all_clean_data %>%
+  inner_join(
+    gdp_analysis_question6$all_clean_data,
+    by = c("Country Name", "Year"), #join on key = Country Name and Year
+    suffix = c("_life", "_gdp") #suffix to know which Value col belongs to which dataframe
+  ) %>%
+  rename(
+    life_expectancy = Value_life,
+    gdp = Value_gdp
+  )
+
+cat("\nCombined observations:", nrow(life_gdp_combined), "\n")
+cat("Countries with both variables:", n_distinct(life_gdp_combined$`Country Name`), "\n")
+cat("Year range:", min(life_gdp_combined$Year), "-", max(life_gdp_combined$Year), "\n")
+
+cat("\nCorrelation Analysis by Country\n")
+
+#4.Calculating the correlation
+life_gdp_corr = life_gdp_combined %>%
+  group_by(`Country Name`) %>%
+  filter(n() >= 10) %>%  #filter to get countries with at least 10 data points for more reliable analysis
+  summarise(
+    correlation_coef = cor(life_expectancy, gdp, method = "pearson", use = "complete.obs"),
+    data_points = n(),
+    avg_life_exp = round(mean(life_expectancy), 1),
+    avg_gdp_billion = round(mean(gdp)/1e9, 1),
+    year_span = max(Year) - min(Year) + 1,
+    .groups = 'drop'
+  ) %>%
+  filter(!is.na(correlation_coef)) %>%
+  mutate(
+    correlation_validation = case_when(
+      abs(correlation_coef) >= 0.8 ~ "Very Strong",
+      abs(correlation_coef) >= 0.6 ~ "Strong", 
+      abs(correlation_coef) >= 0.4 ~ "Moderate",
+      abs(correlation_coef) >= 0.2 ~ "Weak",
+      TRUE ~ "Very Weak"
+    ),
+    correlation_direction = ifelse(correlation_coef > 0, "Positive", "Negative")
+  ) %>%
+  arrange(desc(abs(correlation_coef)))
+
+
+cat("Countries with correlation analysis(after filter out countries with minmum 10 data points):", nrow(life_gdp_corr), "\n")
+
+cat("\nTop 5 Strongest Life Expectancy-GDP Correlations\n")
+
+#5.Show top 5 country with strongest correlations
+top_5_corr = life_gdp_corr %>%
+  head(5) %>%
+  select(`Country Name`, correlation_coef, correlation_validation,correlation_direction, 
+         avg_life_exp, avg_gdp_billion, data_points)
+
+top_5_corr
+```
+
+### 8. Fertility Rate Declining Trend Analysis
+-With the fertility dataset, there is 9.59% NA values --> after filter out to get data from 2010 onwards, there are total of 209 countries
+
+-Using the absolute change (this year's value - last year's value ) to identify country with the strongest declining rate 
+
+--> Result : Top 5 countries with decreasing fertility rate are: Afghanistan, Uganda,Malawi,Sierra Leone,Ethiopia
+
+- Implication : these countries have the fastest declining in fertility rate and it can imply a rapid change in social economy, where there might be a change in healthcare and female education
+```{r fertility rate}
+
+cat("\n--Question 6B: Fertility Rate Descreasing Trend Analysis--\n")
+
+#1.Call function to get the data - Fertility rate
+fertility_analysis = analyze_series_data(
+  data = wdi_data_long,
+  series_name = "Fertility rate, total (births per woman)",
+  shorten_name = "Fertility"
+)
+
+#2.Filter for 2010 onwards as specified
+fertility_2010_onwards = fertility_analysis$all_clean_data %>%
+  filter(Year >= 2010)
+
+cat("\nFertility observations since 2010:", nrow(fertility_2010_onwards), "\n")
+cat("Countries with data since 2010:", n_distinct(fertility_2010_onwards$`Country Name`), "\n")
+
+#3.Calculate decreasing trends
+fertility_decreasing_trends = fertility_2010_onwards %>%
+  group_by(`Country Name`) %>%
+  filter(n() >= 10) %>% #filter to get countries with at least 10 data points for more reliable analysis
+  arrange(Year) %>%
+  mutate(
+    yoy_change = Value - lag(Value)
+  ) %>%
+  filter(!is.na(yoy_change)) %>%
+  summarise(
+    avg_annual_decrease = mean(yoy_change, na.rm = TRUE),
+    total_decline = first(Value) - last(Value),
+    decreasing_years = sum(yoy_change < 0, na.rm = TRUE),
+    total_year_comparisons = n(),
+    consistency_rate = round((decreasing_years / total_year_comparisons) * 100, 1),
+    start_fertility_value = first(Value),
+    end_fertility_value = last(Value),
+    years_analyzed = n() + 1,
+    .groups = 'drop'
+  ) %>%
+  filter(avg_annual_decrease < 0) %>%  #Only countries with declining trends
+  arrange(avg_annual_decrease)  #Most (-)negative first
+
+cat("Countries with decreasing fertility trends(after filter out countries with minmum 10 data points):", nrow(fertility_decreasing_trends), "\n")
+
+
+cat("\nTop 5 Countries with Strongest Fertility Declines\n")
+
+top_5_fertility_declines = fertility_decreasing_trends %>%
+  head(5) %>%
+  select(`Country Name`, avg_annual_decrease, total_decline, 
+         consistency_rate, start_fertility_value, end_fertility_value, years_analyzed) %>%
+  mutate(
+    avg_annual_decrease = round(avg_annual_decrease, 3),
+    total_decline = round(total_decline, 2),
+    start_fertility_value = round(start_fertility_value, 2),
+    end_fertility_value = round(end_fertility_value, 2)
+  )
+
+top_5_fertility_declines
+
+#Summary statistics
+cat("Average fertility decline rate (top 5):", round(mean(top_5_fertility_declines$avg_annual_decrease), 3), "births/woman/year\n")
+
+```
+
+
+### 9. Population Density Analysis by Periods 
+-With the population density dataset , there is 5.14% NA values --> after group by country and period , there are 1032 of total combinations
+
+--> Result : Macao SAR, China appears in 5/10 top records across different periods. Monaco appears in 5/10 records as well. Both countries show extreme population density across decades 
+
+- Regarding the periods, more recent periods (period 6 and 5) appear at the top
+
+- Implication : Extreme population is concentrated in cities regions(such as China) 
+
+```{r population}
+
+#1.Call function to get the data - Population density
+pop_density_analysis = analyze_series_data(
+  data = wdi_data_long,
+  series_name = "Population density (people per sq. km of land area)",
+  shorten_name = "PopulationDensity"
+)
+
+#2.Label the periods accordingly 
+pop_density_periods = pop_density_analysis$all_clean_data %>%
+  mutate(
+    period = case_when(
+      Year >= 1960 & Year <= 1969 ~ "Period 1 (1960-1969)",
+      Year >= 1970 & Year <= 1979 ~ "Period 2 (1970-1979)", 
+      Year >= 1980 & Year <= 1989 ~ "Period 3 (1980-1989)",
+      Year >= 1990 & Year <= 1999 ~ "Period 4 (1990-1999)",
+      Year >= 2000 & Year <= 2009 ~ "Period 5 (2000-2009)",
+      Year >= 2010 & Year <= 2019 ~ "Period 6 (2010-2019)",
+      TRUE ~ "Other"
+    )
+  ) %>%
+  filter(period != "Other")
+cat("\nTotal observations in defined periods:", nrow(pop_density_periods), "\n")
+
+
+cat("\nCalculate Average Population Density for each Country within Period\n")
+
+#3.Calculate average population density
+period_averages = pop_density_periods %>%
+  group_by(`Country Name`, period) %>%
+  summarise(
+    avg_population_density = round(mean(Value, na.rm = TRUE), 2),
+    years_with_data = n(),
+    min_density = round(min(Value, na.rm = TRUE), 2),
+    max_density = round(max(Value, na.rm = TRUE), 2),
+    .groups = 'drop'
+  ) %>%
+  arrange(desc(avg_population_density))
+
+cat("Total country-period combinations:", nrow(period_averages), "\n")
+
+cat("\nTop 10 Highest Average Population Density Records\n")
+
+#4.Get the top 10 countries have the highest population density
+top_10_density = period_averages %>%
+  head(10) %>%
+  select(`Country Name`, period, avg_population_density, years_with_data)
+
+top_10_density
+
+```
+### 10. USA GDP Trend Analysis
+- With the GDP dataset, there is 25.25% NA values, with USA GDP specific dataset, there are 58 data points covering 1960-2018 period because there is no data for 2019 and there is a negative value for 1977
+
+- Resolve by: remove the negative value . Negative GDP values are economically inaccurate for developing country like US, implying a data collection errors or calculation issue.According to this table data from Federal Reserve Bank of St.Louis, there was no negative records for USA GDP((Table Data - Gross Domestic Product | FRED | St. Louis Fed, 2025)
+
+- Economic trend : there seems to be a consistent exponential growth. According to the visualization, period from 1960s to 1970s, it was quite a slow but steady growth. Going to period from 1980s to 1990s, the growth was accelerated. During 2000s, it was still a continued upward trajectory. However, 2008-2009, there was a dip reflecting financial crisis impact, but from 2010-2018, it was a recovery period and a continuing growth
+
+```{r USA GDP trend analysis}
+
+#1.Call function to get the data - GDP
+usa_gdp_analysis = analyze_series_data(
+  data = wdi_data_long,
+  series_name = "GDP (current US$)",
+  shorten_name = "USA_GDP"
+)
+
+#2.Filter for US country only
+usa_gdp_data = usa_gdp_analysis$all_clean_data %>%
+  filter(`Country Name` == "United States") %>%
+  arrange(Year)
+
+cat("\nUSA GDP data points:", nrow(usa_gdp_data), "\n")
+cat("Year range:", min(usa_gdp_data$Year), "-", max(usa_gdp_data$Year), "\n")
+
+#3.Checking if there is any gap in year 1960 to 2019 
+expected = 1960:2019
+actual = usa_gdp_data$Year
+missing_years = setdiff(expected, actual)
+
+cat("Expected years (1960-2019):", length(expected), "\n")
+cat("Actual years available:", length(actual), "\n")
+cat("Missing years:", length(missing_years), "\n")
+
+#Display missing year
+if(length(missing_years) > 0) {
+  cat("Specific missing years:", paste(missing_years, collapse = ", "), "\n")
+}
+
+cat("\nData Processing and Summary Statistics\n")
+
+#4.Cleaning up the data by removing NA and negative value
+usa_gdp_clean = usa_gdp_data %>%
+  filter(!is.na(Value), Value > 0) %>% #there is a negative value for GDP in 1977-->remove 
+  mutate(gdp_billion = Value / 1e9)
+
+#5.Calculate summary statistics
+usa_stats = usa_gdp_clean %>%
+  summarise(
+    total_years = n(),
+    min_gdp = round(min(Value) / 1e9, 1),
+    max_gdp = round(max(Value) / 1e9, 1),
+    mean_gdp = round(mean(Value) / 1e9, 1),
+    start_year = min(Year),
+    end_year = max(Year),
+    .groups = 'drop'
+  )
+
+cat("Clean data points:", usa_stats$total_years, "\n")
+cat("Time coverage:", usa_stats$start_year, "-", usa_stats$end_year, "\n")
+cat("GDP range: $", usa_stats$min_gdp, "B to $", usa_stats$max_gdp, "B\n")
+
+```
+
+### 11. Growth rate analysis for US GDP 
+
+-Using the growth rate formula : (current year - previous year) / previous year * 100 
+
+- Reference: Agnese. (2024, February 27). Year Over Year (YoY) Growth Formula With Examples - AI For Data Analysis - Ajelix. AI for Data Analysis - Ajelix. https://ajelix.com/bi/yoy-formula/
+
+- As stated in the report, growth rate is a pretty standard metrics to assess percentage change in specific value (in this analysis is GDP) compared to same period one year prior, which is helpful in analyze growth trend, and easy to visualize the progress/or change
+
+- According to the growth rate visualization:
+
+-Recession periods are visible (multiple negative growth years below zero line)
+
+-There seems to be a higher growth in earlier 1960-1989 with some spikes
+
+-Peak growth periods:1970s and 1980s
+
+-Growth rates more moderate and stable in recent decades
+
+-Visualization format references : NGUYEN, T. (2016). A REVIEW OF FOREIGN DIRECT INVESTMENT IN VIETNAM: IMPLICATIONS FOR IMPROVEMENTS International Trade and Economics Series. https://www.tradeeconomics.com/wp-content/uploads/2019/07/A-review-of-foreign-direct-investments-in-Vietnam-and-implications-for-improvement-min.pdf
+
+```{r}
+
+cat("\nUS GDP Trend Visualization\n")
+
+#1.Calculate growth rate 
+usa_growth_analysis = usa_gdp_clean %>%
+  arrange(Year) %>%
+  mutate(
+    yoy_change_billion = (Value - lag(Value)) / 1e9,
+    yoy_growth_rate = ((Value - lag(Value)) / lag(Value)) * 100
+  ) %>%
+  filter(!is.na(yoy_change_billion))
+cat("\nGrowth rate data points:", nrow(usa_growth_analysis), "\n")
+
+#2.Visualize the growth rate
+usa_growth_plot = usa_growth_analysis %>%
+  ggplot(aes(x = Year)) +
+  
+  #GDP bar
+  geom_col(aes(y = gdp_billion), fill = "steelblue", alpha = 0.7, width = 0.8) +
+  
+  #Growth rate line --> have to scale it to fit with GDP values
+  geom_line(aes(y = yoy_growth_rate * max(gdp_billion, na.rm = TRUE) / max(yoy_growth_rate, na.rm = TRUE)), 
+            color = "darkred", size = 1.2) +
+  #y-axis (GDP)
+  scale_y_continuous(
+    name = "GDP (Billions USD)",
+    labels = function(x) paste0("$", x, "B"),
+    sec.axis = sec_axis(
+      trans = ~ . * max(usa_growth_analysis$yoy_growth_rate, na.rm = TRUE) / max(usa_growth_analysis$yoy_change_billion, na.rm = TRUE),
+      name = "GDP Growth Rate (%)",
+      labels = function(x) paste0(round(x, 1), "%")
+    )
+  ) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "darkred", alpha = 0.7) +
+  scale_x_continuous(breaks = seq(1960, 2020, 10)) +
+  labs(
+    title = "USA GDP Per Capita and Growth Rate (1961-2018) ",
+    subtitle = "Bars: GDP levels (blue) | Line: GDP Growth Rate (red)",
+    x = "Year"
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(size = 12, face = "bold"),
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    axis.title.y.left = element_text(color = "steelblue"),
+    axis.title.y.right = element_text(color = "darkred"),
+    axis.text.y.left = element_text(color = "steelblue"),
+    axis.text.y.right = element_text(color = "darkred")
+  )
+
+usa_growth_plot
+
+```
+### 12. Analyzing Vietnam GDP from 1990-2019
+
+-The selected country is Vietnam, the current dataset has 30 data points, which meets the criteria for analysis and year range will be from 1990 to 2019 because this analysis aims to capture and analyze the changes in Vietnam after the War
+
+-The year range will be divided into 3 main phases : Post-Reform(from 1990-1999) , Pre-WTO(2000-2006) and Global Integration(2007-2019), the phases are based on the historical events that mark the economic change for Vietnam
+
+-Post-Reform is based on the landmark economic reforms, Doi Moi(Renovation) launched in 1986, initiated a shift from centrally planned economy to market-oriented one
+
+-Pre-WTO is based on the period before Vietnam officially joined WTO on Jan 11, 2007, to understand the in-between period before boosting trade growth and diversify export market
+
+-Global Integration is based on the period when Vietnam joined WTO and a beginning of global trade 
+
+Reference for the phases: 
+-Goverment, N. (2025). Vietnam history overview. Vietnam.gov.vn. https://vietnam.gov.vn/history-68964
+
+IMF Survey: Joining WTO Will Boost Vietnam’s Economy. (2007, January 29). IMF. https://www.imf.org/en/News/Articles/2015/09/28/04/53/socar051a#:~:text=Vietnam%20became%20the%20150th,)%20on%20January%2011%2C%202007.
+
+-Le, D. D. (2015). The past and the hopeful future of Vietnam’s economy. Asian Management Insights, *2*(1), 28–35. https://ink.library.smu.edu.sg/ami/28/
+
+--> Factors influencing Vietnam's GDP is the transition among each phase: From 1990s Post-reform, this period created a very first exponential growth (with 18.91% average growth). From 2000s prior to joining WTO, economic seemed to have a steady growth(with 12.93% average growth). And from 2007 on wards, it showed a stable and consistent growth(with 11.30% average growth). Although the growth rate seems to decrease, Vietnam has emerged as a key player in global trade, expanding its economic partnership and diversified its export market
+
+- According to the visualization, GDP did not show much of a fluctuations, the bars demonstrated a consistent growth. The line showed some fluctuations in 1990s with more rapid changes, but the growth rate seemed to be more steady later on
+
+--> Another supporting factor influencing Vietnam's GDP is the Foreign Direct Investment(FDI)
+
+-Link to FDI net inflows dataset : https://data.worldbank.org/indicator/BX.KLT.DINV.WD.GD.ZS?end=2019&locations=VN&start=1990 (original)
+
+
+-Visualization format references : NGUYEN, T. (2016). A REVIEW OF FOREIGN DIRECT INVESTMENT IN VIETNAM: IMPLICATIONS FOR IMPROVEMENTS International Trade and Economics Series. https://www.tradeeconomics.com/wp-content/uploads/2019/07/A-review-of-foreign-direct-investments-in-Vietnam-and-implications-for-improvement-min.pdf
+
+```{r VN GPD}
+
+#1.Call function to get the data - GDP
+vietnam_gdp_analysis = analyze_series_data(
+  data = wdi_data_long,
+  series_name = "GDP (current US$)",
+  shorten_name = "Vietnam_GDP"
+)
+
+#2.Filter out Vietnam country only and year from 1990 onwards
+vietnam_gdp_data = vietnam_gdp_analysis$all_clean_data %>%
+  filter(
+    `Country Name` == "Vietnam",
+    Year >= 1990
+  ) %>%
+  mutate(gdp_billion = Value / 1e9) #reformat to billions
+cat("\nVietnam GDP data points:", nrow(vietnam_gdp_data), "\n")
+cat("Year coverage:", min(vietnam_gdp_data$Year), "-", max(vietnam_gdp_data$Year), "\n")
+
+
+#3.Check for minimum 20 data points
+if(nrow(vietnam_gdp_data) >= 20){
+  cat("Meet criteria for 20+ data points(years) for analysis\n")
+}else{
+  cat("Less than 20 data points(years) available")
+}
+
+cat("\nGrowth Analysis and Development Phases\n")
+
+#4.Calculate growth and define phases 
+vietnam_growth_analysis = vietnam_gdp_data %>%
+  arrange(Year) %>%
+  mutate(
+    yoy_change_billion = (Value - lag(Value)) / 1e9,
+    yoy_growth_rate = ((Value - lag(Value)) / lag(Value)) * 100,
+    development_phase = case_when(
+      Year >= 1990 & Year <= 1999 ~ "Phase 1: Post-Reform (1990-1999)",
+      Year >= 2000 & Year <= 2006 ~ "Phase 2: Pre-WTO (2000-2006)", 
+      Year >= 2007 & Year <= 2019 ~ "Phase 3: Global Integration (2007-2019)",
+      TRUE ~ "Other"
+    )
+  ) %>%
+  filter(!is.na(yoy_change_billion))
+cat("Growth analysis observations:", nrow(vietnam_growth_analysis), "\n")
+
+cat("\nDevelopment Phases Analysis\n")
+
+#Group by development phase to calculate growth throughout each phase
+phase_summary = vietnam_growth_analysis %>%
+  group_by(development_phase) %>%
+  summarise(
+    years_in_phase = n(),
+    avg_growth_rate = round(mean(yoy_growth_rate, na.rm = TRUE), 2),
+    avg_absolute_change = round(mean(yoy_change_billion, na.rm = TRUE), 2),
+    min_growth = round(min(yoy_growth_rate, na.rm = TRUE), 2),
+    max_growth = round(max(yoy_growth_rate, na.rm = TRUE), 2),
+    .groups = 'drop'
+  ) %>%
+  arrange(development_phase)
+
+#Display the summary
+phase_summary
+
+
+cat("\nVietnam GDP Trend Visualization\n")
+#Visualization 
+vietnam_trend_plot = vietnam_growth_analysis %>%
+  ggplot(aes(x = Year)) +
+  
+  #GDP bar
+  geom_col(aes(y = gdp_billion), fill = "steelblue", alpha = 0.7, width = 0.8) +
+  
+  #Growth rate line --> have to scale it to fit with GDP values
+  geom_line(aes(y = yoy_growth_rate * max(gdp_billion, na.rm = TRUE) / max(yoy_growth_rate, na.rm = TRUE)), 
+            color = "darkred", size = 1.2) +
+  #Marking the line for WTO event
+  geom_vline(xintercept = 2007, linetype = "dotted", color = "red", alpha = 0.7) +
+  
+  #y-axis (GDP)
+  scale_y_continuous(
+    name = "GDP (Billions USD)",
+    labels = function(x) paste0("$", x, "B"),
+    sec.axis = sec_axis(
+      trans = ~ . * max(vietnam_growth_analysis$yoy_growth_rate, na.rm = TRUE) / max(vietnam_growth_analysis$gdp_billion, na.rm = TRUE),
+      name = "GDP Growth Rate (%)",
+      labels = function(x) paste0(round(x, 1), "%")
+    )
+  ) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "darkred", alpha = 0.7)+
+  scale_x_continuous(breaks = seq(1990, 2020, 2)) +
+  labs(
+    title = "Vietnam GDP Per Capita and Growth Rate (1991-2019)",
+    subtitle = "Bars: GDP levels (blue) | Line: GDP Growth Rate (red)",
+    x = "Year",
+    caption = "Red vertical line: 2007 WTO accession"
+  ) +
+  
+  theme_minimal() +
+  theme(
+    plot.title = element_text(size = 12, face = "bold"),
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    axis.title.y.left = element_text(color = "steelblue"),
+    axis.title.y.right = element_text(color = "darkred"),
+    axis.text.y.left = element_text(color = "steelblue"),
+    axis.text.y.right = element_text(color = "darkred")
+  )
+#Display the plot
+vietnam_trend_plot
+```
+### External Dataset for FDI ( Source World Bank Group )
+
+-Link to FDI net inflows dataset : https://data.worldbank.org/indicator/BX.KLT.DINV.WD.GD.ZS?end=2019&locations=VN&start=1990 (original)
+
+
+```{r External Datasource FDI}
+
+cat("\n1.Load dataset and Prepare Data\n")
+
+#1.Load the dataset
+fdi_data = read_csv("WorldBankGroup_FDI.csv")
+cat("Dataset loaded successfully\n")
+
+#2.Display information
+cat("Dimension:",nrow(fdi_data),"rows x", ncol(fdi_data), "columns\n")
+cat("Total observations:", nrow(fdi_data),"\n")
+cat("Total variables:", ncol(fdi_data),"\n")
+cat("Unique countries:", n_distinct(fdi_data$"Country Name"),"\n")
+cat("Unique series name :", n_distinct(fdi_data$"Indicator Name"),"\n")
+
+#3.Convert the dataset into long format 
+cat("--Converting to long format--\n")
+fdi_data_long = fdi_data %>%
+  rename(`Series Name` = `Indicator Name`)%>% #rename to match with the current dataset 
+  gather(key = "Year", value = "Value", 
+         -`Country Name`, -`Country Code`, -`Series Name`, -`Indicator Code`) %>%
+  mutate(Year = as.numeric(str_extract(Year, "\\d{4}")), # use regexp to find the match for year (only take 4 digits )
+         Date = make_date(year = Year)) %>%
+  select(`Country Name`, `Country Code`, `Series Name`, Year, Value) 
+
+#Display information
+cat("Total observations(long data format):", nrow(fdi_data_long),"\n")
+cat("Total variables(long data format):", ncol(fdi_data_long),"\n")
+
+cat("\n2.Extract Vietnam FDI data\n")
+
+#1.Call function to get the data - GDP
+vietnam_fdi_analysis = analyze_series_data(
+  data = fdi_data_long,
+  series_name = "Foreign direct investment, net inflows (% of GDP)",
+  shorten_name = "VNM_FDI"
+)
+
+#2.Filter for Vietnam country only
+vietnam_fdi_data = vietnam_fdi_analysis$all_clean_data %>%
+  filter(`Country Name` == "Viet Nam",
+          Year >= 1990,
+          Year <= 2019) %>%
+  arrange(Year)
+
+cat("Vietnam FDI data points:", nrow(vietnam_fdi_data), "\n")
+cat("Year range:", min(vietnam_fdi_data$Year), "-", max(vietnam_fdi_data$Year), "\n")
+
+cat("\n3.Vietnam FDI Analysis\n")
+
+#Clean up vietnam FDI: add in the development phase and calculate changes rate
+vietnam_fdi_clean = vietnam_fdi_data %>%
+  arrange(Year) %>%
+  mutate(
+    # Development phases matching your GDP analysis
+    development_phase = case_when(
+      Year >= 1990 & Year <= 1999 ~ "Phase 1: Post-Reform (1990-1999)",
+      Year >= 2000 & Year <= 2006 ~ "Phase 2: Pre-WTO (2000-2006)", 
+      Year >= 2007 & Year <= 2019 ~ "Phase 3: Global Integration (2007-2019)",
+      TRUE ~ "Other"
+    ),
+    yoy_fdi_change = Value - lag(Value),
+    yoy_fdi_growth_rate = ((Value - lag(Value)) / lag(Value)) * 100
+  )%>%
+  filter(!is.na(yoy_fdi_change))
+
+#FDI summary table 
+fdi_phase_analysis = vietnam_fdi_clean %>%
+  group_by(development_phase) %>%
+  summarise(
+    years_in_phase = n(),
+    avg_fdi_growth_rate = round(mean(Value, na.rm = TRUE), 2),
+    min_fdi = round(min(Value, na.rm = TRUE), 2),
+    max_fdi = round(max(Value, na.rm = TRUE), 2),
+    .groups = 'drop'
+  ) %>%
+  arrange(development_phase)
+
+cat("FDI by Development Phase:\n")
+fdi_phase_analysis
+
+```
+
+### Vietnam FDI relative growth rate ratio analysis (capturing the relative relationship between 2 variables)
+-Year range is from 2007 to 2019 which focusing on analyzing the economic development and FDI after Vietnam joined WTO and began its global integration
+-Method is to calculate the ratio of how much GDP grows per unit of FDI investment change 
+
+Result : Average relative growth rate ratio is approximately 2.05, which means 2.05% GDP growth per 1% FDI inflow change. The most effective ratio is 2011 with 4 ratio and the least effective ratio year is 2015 with 0.76 ration . Regarding the period, mid-integration seems to have the best performance (despite having the worst performanced year)
+
+-Limitation: this analysis assumes that there would be an immediate FDI change/or impact during the period from 2007 to 2019, don't account for any policy/government or world's at-the-time issues
+
+-Implication : During the 2011, there was a samsung's manufacturing investment, which was one of the major FDI project in Vietnam, it can possibly explain for the high ratio during this year. And during 2015, there were some competitions in ASEAN countries where it affected the export markets 
+
+```{r analysis}
+
+#1.Filter both datasets for correlation period
+fdi_period = vietnam_fdi_clean %>%
+  filter(Year >= 2007, Year <= 2019) %>%
+  select(Year, yoy_fdi_growth_rate = Value)
+
+gdp_period = vietnam_growth_analysis %>%
+  filter(Year >= 2007, Year <= 2019) %>%
+  select(Year, gdp_billion, yoy_growth_rate)
+
+#2.Join both datasets together
+fdi_gdp_combined = fdi_period %>%
+  inner_join(gdp_period, by = "Year") #join both dataset on key = Year
+
+cat("\nCombined FDI-GDP observations:", nrow(fdi_gdp_combined), "\n")
+
+#Analyzing FDI growth rate ratio
+cat("\n4.FDI relative growth rate ratio analysis\n")
+
+fdi_ratio = fdi_gdp_combined %>%
+  mutate(
+    growth_per_fdi = yoy_growth_rate / yoy_fdi_growth_rate,
+    ratio_category = case_when(
+      growth_per_fdi >= 2 ~ "High Performance Ratio",
+      growth_per_fdi >= 1 ~ "Medium Performance Ratio", 
+      TRUE ~ "Low Efficiency"
+    )
+  ) %>%
+  filter(!is.infinite(growth_per_fdi), !is.na(growth_per_fdi))
+
+cat("Total observations for analysis:", nrow(fdi_ratio), "\n")
+
+#Create time periods within your 2007-2019 data
+fdi_ratio = fdi_ratio %>%
+  mutate(
+    sub_period = case_when(
+      Year >= 2007 & Year <= 2010 ~ "Early Integration (2007-2010)",
+      Year >= 2011 & Year <= 2015 ~ "Mid Integration (2011-2015)",
+      Year >= 2016 & Year <= 2019 ~ "Late Integration (2016-2019)",
+      TRUE ~ "Other"
+    )
+  )
+
+#Trend by sub-periods
+ratio_by_period = fdi_ratio %>%
+  group_by(sub_period) %>%
+  summarise(
+    observations = n(),
+    avg_ratio = round(mean(growth_per_fdi, na.rm = TRUE), 2),
+    median_ratio = round(median(growth_per_fdi, na.rm = TRUE), 2),
+    min_ratio = round(min(growth_per_fdi, na.rm = TRUE), 2),
+    max_ratio = round(max(growth_per_fdi, na.rm = TRUE), 2),
+    .groups = 'drop'
+  ) %>%
+  arrange(sub_period)
+
+ratio_by_period
+
+#Year-by-year analysis
+yearly_ratio = fdi_ratio %>%
+  select(Year, yoy_fdi_growth_rate, yoy_growth_rate, growth_per_fdi, ratio_category) %>%
+  arrange(Year)
+
+cat("\nYear-by-Year FDI relative growth rate ratio:\n")
+yearly_ratio
+
+# Summary statistics
+cat("\n--FDI Relative growth rate ratio summary ===\n")
+cat("Average ratio (growth % per FDI %):", round(mean(fdi_ratio$growth_per_fdi, na.rm = TRUE), 2), "\n")
+cat("Most performance year:", yearly_ratio$Year[which.max(yearly_ratio$growth_per_fdi)], "\n")
+cat("Least performancr year:", yearly_ratio$Year[which.min(yearly_ratio$growth_per_fdi)], "\n")
+cat("High ratio years:", sum(fdi_ratio$ratio_category == "High Performance Ratio"), "out of", nrow(fdi_ratio), "\n")
+
+
+```
+
+

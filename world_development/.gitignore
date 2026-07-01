@@ -1,0 +1,11 @@
+# Data
+World_Development_Indicator*.csv
+
+# R session files
+.RData
+.Rhistory
+*.Ruserdata
+.Rproj.user/
+
+# Mac system file
+.DS_Store
