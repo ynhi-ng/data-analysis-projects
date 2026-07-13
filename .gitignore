@@ -1,1 +1,8 @@
+# Mac system files
 .DS_Store
+
+# R session/project files
+.Rproj.user/
+.Rhistory
+.RData
+*.Ruserdata
