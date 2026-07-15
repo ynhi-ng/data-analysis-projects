@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Sales Report — E-Commerce EDA</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600&family=IBM+Plex+Mono:wght@400;500;600&family=Work+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js"></script>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="wrap">
+
+  <header class="masthead">
+    <div class="eyebrow">Report No. 2010–2011 · Exploratory Analysis</div>
+    <h1>The Sales Report</h1>
+    <p class="subtitle">A UK-based online gift retailer, transaction-by-transaction. 391,150 clean line items, 4,334 customers, 37 countries, one calendar year and nine days.</p>
+  </header>
+
+  <div class="stat-strip" id="statStrip"></div>
+
+  <div class="ledger-page" style="position:relative;">
+    <div class="stamp-badge">TOP<br>MARKET</div>
+    <div class="panel-head">
+      <div class="panel-title">Revenue by Country</div>
+      <div class="panel-note">UK alone is ~83% of total revenue</div>
+    </div>
+    <div class="chart-box tall"><canvas id="countryChart"></canvas></div>
+  </div>
+
+  <div class="grid-2">
+    <div class="ledger-page">
+      <div class="panel-head">
+        <div class="panel-title">Top 5 Products</div>
+        <div class="panel-note">by total revenue</div>
+      </div>
+      <div class="chart-box"><canvas id="productChart"></canvas></div>
+    </div>
+
+    <div class="ledger-page">
+      <div class="panel-head">
+        <div class="panel-title">Orders by Weekday</div>
+        <div class="panel-note">no Saturday trading in this dataset</div>
+      </div>
+      <div class="chart-box"><canvas id="weekdayChart"></canvas></div>
+    </div>
+  </div>
+
+  <div class="grid-2">
+    <div class="ledger-page">
+      <div class="panel-head">
+        <div class="panel-title">Monthly Order Trend</div>
+        <div class="panel-note">Dec 2011 is partial — data ends Dec 9</div>
+      </div>
+      <div class="chart-box"><canvas id="monthChart"></canvas></div>
+    </div>
+
+    <div class="ledger-page">
+      <div class="panel-head">
+        <div class="panel-title">Orders by Hour of Day</div>
+        <div class="panel-note">peak at noon, plateau 10am–3pm</div>
+      </div>
+      <div class="chart-box"><canvas id="hourChart"></canvas></div>
+    </div>
+  </div>
+
+  <div class="ledger-page">
+    <div class="panel-head">
+      <div class="panel-title">Customer Segments (RFM)</div>
+      <div class="panel-note">Recency + Frequency scoring, 10-segment map</div>
+    </div>
+    <div class="chart-box tall"><canvas id="segmentChart"></canvas></div>
+  </div>
+
+  <div class="ledger-page insights">
+    <div class="panel-head">
+      <div class="panel-title">Key Insights</div>
+      <div class="panel-note">verified against the cleaned dataset</div>
+    </div>
+    <ul>
+      <li><strong>Timing:</strong> orders rise Monday through Thursday, then drop — Thursday promotions and a midday (10am–3pm) flash-sale window line up with actual order volume.</li>
+      <li><strong>Concentration:</strong> the UK generates ~83% of all revenue; Netherlands, EIRE, Germany and France are the next tier, each far smaller.</li>
+      <li><strong>Segmentation:</strong> RFM scoring splits customers into 10 groups — Hibernating is the largest single group (1,067 customers), meaning re-engagement campaigns have real reach.</li>
+      <li><strong>Recommendation:</strong> a hybrid content + co-purchase recommender can now surface both textually-similar and commonly co-bought products (see accompanying notebook code).</li>
+    </ul>
+  </div>
+
+  <footer>
+    Built from <strong>UCI Online Retail dataset</strong> · cleaning: dropna → dedupe → remove cancelled orders and non-product stock codes (POST, D, C2, M, DOT, CRUK, BANK CHARGES, PADS) → Quantity &gt; 0 → UnitPrice &gt; 0.<br>
+    Final clean row count: <strong>391,150</strong>
+  </footer>
+
+</div>
+
+<script src="data.js"></script>
+<script src="script.js"></script>
+</body>
+</html>
