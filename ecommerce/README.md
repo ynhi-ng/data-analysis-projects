@@ -8,11 +8,11 @@ features) and a product recommender (TF-IDF + cosine similarity on product
 descriptions). Findings are published as a static, interactive report.
 
 ## Status
-✅ Complete
+Complete
 
 ## Tools Used
 - Python: pandas, numpy, scikit-learn (KMeans, TF-IDF, cosine similarity), seaborn, matplotlib
-- HTML, CSS, JavaScript, Chart.js — for the interactive report
+- HTML, CSS, JavaScript, Chart.js - for the interactive report
 
 ## Files
 - `ecommerce_eda.ipynb` — data cleaning, EDA, customer segmentation, and product recommender
@@ -21,4 +21,4 @@ descriptions). Findings are published as a static, interactive report.
 - `e-commerce_data.csv` — raw transaction data (not tracked in git; see `.gitignore`)
 
 ## Data Sources
-- UK online retailer transaction data, Dec 2010–Dec 2011 (public dataset)
+- Chen, D. (2015). Online Retail [Dataset]. UCI Machine Learning Repository. https://doi.org/10.24432/C5BW33.
