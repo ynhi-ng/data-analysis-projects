@@ -7,9 +7,6 @@ transaction log, then builds customer segmentation (K-means on RFM-style
 features) and a product recommender (TF-IDF + cosine similarity on product
 descriptions). Findings are published as a static, interactive report.
 
-## Status
-Complete
-
 ## Tools Used
 - Python: pandas, numpy, scikit-learn (KMeans, TF-IDF, cosine similarity), seaborn, matplotlib
 - HTML, CSS, JavaScript, Chart.js - for the interactive report
